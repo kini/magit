@@ -1079,13 +1079,20 @@ the buffer in another window."
                      current-prefix-arg))
   (if (magit-file-accessible-directory-p file)
       (magit-diff-visit-directory file other-window)
-    (let* ((hunk (magit-diff--closest-hunk))
+    (let* ((type (magit-diff-type))
+           (hunk (magit-diff--closest-hunk))
            (line (and hunk (magit-diff-hunk-line   hunk)))
            (col  (and hunk (magit-diff-hunk-column hunk)))
            (buf  (magit-diff-visit-file-noselect file force-worktree)))
       (magit-display-file-buffer buf)
       (with-current-buffer buf
         (when line
+          (setq line
+                (if (eq type 'staged)
+                    ;; `line' is appropriate for visiting the index, but
+                    ;; we are going to visit the working tree file.
+                    (apply 'magit-diff--index-offset file line)
+                  (apply '+ line)))
           (let ((pos (save-restriction
                        (widen)
                        (goto-char (point-min))
@@ -1098,6 +1105,24 @@ the buffer in another window."
         (when (magit-anything-unmerged-p file)
           (smerge-start-session))
         (run-hooks 'magit-diff-visit-file-hook)))))
+
+(defun magit-diff--index-offset (file hunk-start line-offset)
+  (let ((offset 0))
+    (with-temp-buffer
+      (save-excursion
+        (magit-git-insert "diff" "--" file))
+      (catch 'found
+        (while (re-search-forward
+                "^@@ -\\([0-9]+\\),\\([0-9]+\\) \\+\\([0-9]+\\),\\([0-9]+\\) @@$"
+                nil t)
+          (let ((ibeg (string-to-number (match-string 1)))
+                (ilen (string-to-number (match-string 2)))
+                (wlen (string-to-number (match-string 4))))
+            (if (< ibeg hunk-start)
+                (cl-incf offset (- wlen ilen))
+              (throw 'found nil))))))
+    (message "(+ %s %s %s)" hunk-start line-offset offset)
+    (+ hunk-start line-offset offset)))
 
 (defun magit-diff-visit-file-noselect (file &optional force-worktree)
   (let ((rev (and (not force-worktree)
@@ -1179,6 +1204,7 @@ or `HEAD'."
          (prior  (and (= (length value) 3)
                       (save-excursion (goto-char (line-beginning-position))
                                       (looking-at "-"))))
+         (offset 0)
          (line   (if prior
                      (cadr value)
                    (car (last value)))))
@@ -1195,9 +1221,9 @@ or `HEAD'."
         (unless (string-match-p
                  (if prior "\\+" "-")
                  (buffer-substring (point) (+ (point) prefix)))
-          (cl-incf line))
+          (cl-incf offset))
         (forward-line)))
-    line))
+    (list line offset)))
 
 (defun magit-diff-hunk-column (section)
   (if (or (< (point) (magit-section-content section))
