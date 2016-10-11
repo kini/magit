@@ -1062,34 +1062,7 @@ the buffer in another window."
     (let* ((hunk (magit-diff--closest-hunk))
            (line (and hunk (magit-diff-hunk-line   hunk)))
            (col  (and hunk (magit-diff-hunk-column hunk)))
-           (rev (cond (force-worktree nil)
-                      ((derived-mode-p 'magit-revision-mode)
-                       (car magit-refresh-args))
-                      ((derived-mode-p 'magit-stash-mode)
-                       (magit-section-case
-                         (file (-> it
-                                   magit-section-parent
-                                   magit-section-value))
-                         (hunk (-> it
-                                   magit-section-parent
-                                   magit-section-parent
-                                   magit-section-value))))
-                      ((derived-mode-p 'magit-diff-mode)
-                       (--when-let (car magit-refresh-args)
-                         (and (string-match "\\.\\.\\([^.].*\\)?[ \t]*\\'" it)
-                              (match-string 1 it))))))
-           buf)
-      (when (and (eq (magit-section-type (magit-current-section)) 'hunk)
-                 rev
-                 (save-excursion (goto-char (line-beginning-position))
-                                 (looking-at "-")))
-        (setq rev (magit-rev-name (concat rev "~"))))
-      (when (and rev (magit-rev-head-p rev))
-        (setq rev nil))
-      (setq buf (if rev
-                    (magit-find-file-noselect rev file)
-                  (or (get-file-buffer file)
-                      (find-file-noselect file))))
+           (buf  (magit-diff-visit-file-noselect file force-worktree)))
       (magit-display-file-buffer buf)
       (with-current-buffer buf
         (when line
@@ -1105,6 +1078,35 @@ the buffer in another window."
         (when (magit-anything-unmerged-p file)
           (smerge-start-session))
         (run-hooks 'magit-diff-visit-file-hook)))))
+
+(defun magit-diff-visit-file-noselect (file &optional force-worktree)
+  (let ((rev (cond (force-worktree nil)
+                   ((derived-mode-p 'magit-revision-mode)
+                    (car magit-refresh-args))
+                   ((derived-mode-p 'magit-stash-mode)
+                    (magit-section-case
+                      (file (-> it
+                                magit-section-parent
+                                magit-section-value))
+                      (hunk (-> it
+                                magit-section-parent
+                                magit-section-parent
+                                magit-section-value))))
+                   ((derived-mode-p 'magit-diff-mode)
+                    (--when-let (car magit-refresh-args)
+                      (and (string-match "\\.\\.\\([^.].*\\)?[ \t]*\\'" it)
+                           (match-string 1 it)))))))
+    (when (and (eq (magit-section-type (magit-current-section)) 'hunk)
+               rev
+               (save-excursion (goto-char (line-beginning-position))
+                               (looking-at "-")))
+      (setq rev (magit-rev-name (concat rev "~"))))
+    (when (and rev (magit-rev-head-p rev))
+      (setq rev nil))
+    (if rev
+        (magit-find-file-noselect rev file)
+      (or (get-file-buffer file)
+          (find-file-noselect file)))))
 
 (defvar magit-display-file-buffer-function
   'magit-display-file-buffer-traditional
